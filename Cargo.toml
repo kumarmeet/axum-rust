@@ -17,5 +17,4 @@ tokio = { version = "1.54.1", features = ["full"] }
 tower-http = { version = "0.7.1", features = ["trace"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-log = "0.4.35"
-sqlx = { version = "0.9.1", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.9.1", features = ["macros", "migrate", "runtime-tokio", "sqlite"] }

@@ -2,16 +2,37 @@ mod config;
 mod error;
 mod handler;
 mod model;
+mod repo;
 
-use std::str::FromStr;
+use crate::repo::{PostRepo, SqlitePostRepo};
 
 use axum::{Router, routing::get};
+
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+
+use std::str::FromStr;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
-// rust doesn't have built in async runtime, so this is the job of tokio
-#[tokio::main] // starts the async runtime
+pub fn app<R: PostRepo>(repo: R) -> Router {
+    Router::new()
+        .route("/", get(handler::hello))
+        .route(
+            "/posts/{id}",
+            get(handler::get_post::<R>)
+                .delete(handler::delete_post::<R>)
+                .patch(handler::update_post::<R>),
+        )
+        .route(
+            "/posts",
+            get(handler::get_all_post::<R>).post(handler::create_post::<R>),
+        )
+        .with_state(repo)
+        .layer(TraceLayer::new_for_http())
+}
+
+// Tokio provides the asynchronous runtime.
+#[tokio::main]
 async fn main() {
     let cfg = config::config();
 
@@ -22,8 +43,9 @@ async fn main() {
         .init();
 
     let address = format!("{}:{}", cfg.host, cfg.port);
+
     let options = SqliteConnectOptions::from_str(&cfg.database_url)
-        .unwrap()
+        .expect("Invalid database URL")
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal);
 
@@ -31,33 +53,26 @@ async fn main() {
         .max_connections(5)
         .connect_with(options)
         .await
-        .unwrap();
+        .expect("Failed to connect to SQLite");
 
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS posts( id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,body TEXT NOT NULL)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    // Run database migrations
+    sqlx::migrate!("./db/migrations")
+        .run(&pool)
+        .await
+        .expect("Migration failed");
 
-    // let db = DB::default();
+    // Initialize repository
+    let repo = SqlitePostRepo { pool: pool.clone() };
 
-    let app = Router::new()
-        .route("/", get(handler::hello))
-        .route(
-            "/posts/{id}",
-            get(handler::get_post)
-                .delete(handler::delete_post)
-                .patch(handler::update_post),
-        )
-        .route(
-            "/posts",
-            get(handler::get_all_post).post(handler::create_post),
-        )
-        .with_state(pool)
-        .layer(TraceLayer::new_for_http());
+    // Initialize application
+    let app = app(repo);
 
-    let listener = tokio::net::TcpListener::bind(&address).await.unwrap();
-    tracing::info!(%address, "listening");
-    axum::serve(listener, app).await.unwrap();
+    // Start HTTP server
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await
+        .expect("Failed to bind address");
+
+    tracing::info!(%address, "Server listening");
+
+    axum::serve(listener, app).await.expect("Server failed");
 }
