@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 pub struct Config {
     pub host: String,
     pub port: u16,
+    pub database_url: String,
 }
 
 impl Config {
@@ -14,7 +15,12 @@ impl Config {
         let port = port
             .parse::<u16>()
             .unwrap_or_else(|e| panic!("port {port:?} is not a port number: {e}"));
-        Self { host, port }
+        let database_url = env::var("DATABASE_URL").unwrap_or(String::from("sqlite://blog.db"));
+        Self {
+            host,
+            port,
+            database_url,
+        }
     }
 }
 

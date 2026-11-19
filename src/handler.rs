@@ -1,5 +1,6 @@
 use crate::error::ApiError;
-use crate::model::{DB, NewPost, Post};
+use crate::model::{NewPost, Post};
+use crate::repo::PostRepo;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
@@ -9,6 +10,7 @@ fn check(new: &NewPost) -> Result<(), ApiError> {
     if new.title.is_empty() {
         return Err(ApiError::EmptyTitle);
     }
+
     Ok(())
 }
 
@@ -16,63 +18,69 @@ pub async fn hello() -> &'static str {
     "hello world!"
 }
 
-pub async fn get_post(State(db): State<DB>, Path(id): Path<u32>) -> Result<Json<Post>, ApiError> {
-    let store = db.lock().unwrap();
-    let post = store.posts.get(&id).ok_or(ApiError::NotFound(id))?;
-    Ok(Json(post.clone()))
+pub async fn get_post<R: PostRepo>(
+    State(repo): State<R>,
+    Path(id): Path<i64>,
+) -> Result<Json<Post>, ApiError> {
+    let post = repo.get(id).await?;
+
+    match post {
+        Some(post) => Ok(Json(post)),
+        None => Err(ApiError::NotFound(id)),
+    }
 }
 
-pub async fn create_post(
-    State(db): State<DB>,
+#[tracing::instrument(skip(repo))]
+pub async fn create_post<R: PostRepo>(
+    State(repo): State<R>,
     payload: Result<Json<NewPost>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Post>), ApiError> {
     let Json(p) = payload?;
 
     check(&p)?;
 
-    let mut store = db.lock().unwrap();
-    store.next_id += 1;
+    let post = repo.create(p).await?;
 
-    let post = Post {
-        id: store.next_id,
-        title: p.title,
-        body: p.body,
-    };
+    tracing::debug!(id = post.id, "created new post");
 
-    store.posts.insert(post.id, post.clone());
+    // if let Ok(json) = serde_json::to_string_pretty(&p) {
+    //     tracing::debug!(payload = %json, "Incoming payload");
+    // }
+
     Ok((StatusCode::CREATED, Json(post)))
 }
 
-pub async fn update_post(
-    State(db): State<DB>,
-    Path(id): Path<u32>,
+pub async fn update_post<R: PostRepo>(
+    State(repo): State<R>,
+    Path(id): Path<i64>,
     payload: Result<Json<NewPost>, JsonRejection>,
 ) -> Result<Json<Post>, ApiError> {
     let Json(p) = payload?;
 
     check(&p)?;
 
-    let mut store = db.lock().unwrap();
+    let post = repo.update(id, p).await?;
 
-    // get_mut return mutable reference
-    let post = store.posts.get_mut(&id).ok_or(ApiError::NotFound(id))?;
-
-    post.body = p.body;
-    post.title = p.title;
-
-    Ok(Json(post.clone()))
+    match post {
+        Some(post) => Ok(Json(post)),
+        None => Err(ApiError::NotFound(id)),
+    }
 }
 
-pub async fn delete_post(
-    State(db): State<DB>,
-    Path(id): Path<u32>,
+pub async fn delete_post<R: PostRepo>(
+    State(repo): State<R>,
+    Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let mut store = db.lock().unwrap();
-    store.posts.remove(&id).ok_or(ApiError::NotFound(id))?;
+    let result = repo.delete(id).await?;
+
+    if !result {
+        return Err(ApiError::NotFound(id));
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn get_all_post(State(db): State<DB>) -> Json<Vec<Post>> {
-    let store = db.lock().unwrap();
-    Json(store.posts.values().cloned().collect())
+pub async fn get_all_post<R: PostRepo>(State(repo): State<R>) -> Result<Json<Vec<Post>>, ApiError> {
+    let posts = repo.list().await?;
+    Ok(Json(posts))
 }
