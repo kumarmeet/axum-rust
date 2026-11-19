@@ -9,7 +9,7 @@ pub struct Post {
     pub body: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NewPost {
     pub title: String,
     pub body: String,

@@ -1,7 +1,8 @@
+use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use log::error;
 use serde_json::json;
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ pub enum ApiError {
 // without implement this trait, axum will not access any custom type
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        tracing::warn!(error = %self, "request failed");
         let status = match &self {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::EmptyTitle => StatusCode::BAD_REQUEST,

@@ -22,6 +22,7 @@ pub async fn get_post(State(db): State<DB>, Path(id): Path<u32>) -> Result<Json<
     Ok(Json(post.clone()))
 }
 
+#[tracing::instrument(skip(db))]
 pub async fn create_post(
     State(db): State<DB>,
     payload: Result<Json<NewPost>, JsonRejection>,
@@ -35,11 +36,17 @@ pub async fn create_post(
 
     let post = Post {
         id: store.next_id,
-        title: p.title,
-        body: p.body,
+        title: p.title.clone(),
+        body: p.body.clone(),
     };
 
     store.posts.insert(post.id, post.clone());
+    tracing::debug!(id = post.id, "created new post");
+
+    if let Ok(json) = serde_json::to_string_pretty(&p) {
+        tracing::debug!(payload = %json, "Incoming payload");
+    }
+
     Ok((StatusCode::CREATED, Json(post)))
 }
 
