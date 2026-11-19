@@ -1,0 +1,4 @@
+[alias]
+dev = ["watch", "-s", "cargo run --features dev"]
+check-watch = ["watch", "-x", "check"]
+build-release = "build --release"
