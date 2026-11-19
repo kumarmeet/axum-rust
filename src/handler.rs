@@ -16,10 +16,13 @@ pub async fn hello() -> &'static str {
     "hello world!"
 }
 
-pub async fn get_post(State(db): State<DB>, Path(id): Path<u32>) -> Result<Json<Post>, ApiError> {
-    let store = db.lock().unwrap();
-    let post = store.posts.get(&id).ok_or(ApiError::NotFound(id))?;
-    Ok(Json(post.clone()))
+pub async fn get_post(State(db): State<DB>, Path(id): Path<i64>) -> Result<Json<Post>, ApiError> {
+    let post = sqlx::query_as::<_, Post>("SELECT * FROM posts WHERE id = ?")
+        .bind(&id)
+        .fetch_one(&db)
+        .await?;
+
+    Ok(Json(post))
 }
 
 #[tracing::instrument(skip(db))]
@@ -31,16 +34,13 @@ pub async fn create_post(
 
     check(&p)?;
 
-    let mut store = db.lock().unwrap();
-    store.next_id += 1;
+    let post =
+        sqlx::query_as::<_, Post>("INSERT INTO posts (title, body) values (?, ?) returning *")
+            .bind(p.title.clone())
+            .bind(p.body.clone())
+            .fetch_one(&db)
+            .await?;
 
-    let post = Post {
-        id: store.next_id,
-        title: p.title.clone(),
-        body: p.body.clone(),
-    };
-
-    store.posts.insert(post.id, post.clone());
     tracing::debug!(id = post.id, "created new post");
 
     if let Ok(json) = serde_json::to_string_pretty(&p) {
@@ -52,34 +52,44 @@ pub async fn create_post(
 
 pub async fn update_post(
     State(db): State<DB>,
-    Path(id): Path<u32>,
+    Path(id): Path<i64>,
     payload: Result<Json<NewPost>, JsonRejection>,
 ) -> Result<Json<Post>, ApiError> {
     let Json(p) = payload?;
 
     check(&p)?;
 
-    let mut store = db.lock().unwrap();
+    let post =
+        sqlx::query_as::<_, Post>("UPDATE posts SET title = ?, body = ? WHERE id = ? returning *")
+            .bind(&p.title)
+            .bind(&p.body)
+            .bind(id)
+            .fetch_one(&db)
+            .await?;
 
-    // get_mut return mutable reference
-    let post = store.posts.get_mut(&id).ok_or(ApiError::NotFound(id))?;
-
-    post.body = p.body;
-    post.title = p.title;
-
-    Ok(Json(post.clone()))
+    Ok(Json(post))
 }
 
 pub async fn delete_post(
     State(db): State<DB>,
-    Path(id): Path<u32>,
+    Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let mut store = db.lock().unwrap();
-    store.posts.remove(&id).ok_or(ApiError::NotFound(id))?;
+    let result = sqlx::query("DELETE FROM posts WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound(id));
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn get_all_post(State(db): State<DB>) -> Json<Vec<Post>> {
-    let store = db.lock().unwrap();
-    Json(store.posts.values().cloned().collect())
+pub async fn get_all_post(State(db): State<DB>) -> Result<Json<Vec<Post>>, ApiError> {
+    let posts = sqlx::query_as::<_, Post>("SELECT * FROM posts ORDER BY id")
+        .fetch_all(&db)
+        .await?;
+
+    Ok(Json(posts))
 }

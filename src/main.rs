@@ -2,9 +2,11 @@ mod config;
 mod error;
 mod handler;
 mod model;
-use model::DB;
+
+use std::str::FromStr;
 
 use axum::{Router, routing::get};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
@@ -20,7 +22,25 @@ async fn main() {
         .init();
 
     let address = format!("{}:{}", cfg.host, cfg.port);
-    let db = DB::default();
+    let options = SqliteConnectOptions::from_str(&cfg.database_url)
+        .unwrap()
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(options)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS posts( id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,body TEXT NOT NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // let db = DB::default();
 
     let app = Router::new()
         .route("/", get(handler::hello))
@@ -34,7 +54,7 @@ async fn main() {
             "/posts",
             get(handler::get_all_post).post(handler::create_post),
         )
-        .with_state(db)
+        .with_state(pool)
         .layer(TraceLayer::new_for_http());
 
     let listener = tokio::net::TcpListener::bind(&address).await.unwrap();
